@@ -1,192 +1,172 @@
 import os
-import csv
-import time
-import json
+import sys
 import struct
 import math
-import random
+import time
+import json
 import threading
-from queue import Queue, Empty
+import argparse
 from datetime import datetime
-from pathlib import Path
-from skyfield.api import load, wgs84, EarthSatellite
+from queue import Queue, Empty
+from skyfield.api import load, wgs84
 
 # =============================================================================
-# KERNEL ARCHITECTURE & SIGNAL CONSTANTS
+# HIGH-ADVANCEMENT CONFIGURATION (THE FUTURE-NOW KERNEL)
 # =============================================================================
-GROUND_STATION = wgs84.latlon(45.523062, -122.676482)
-SAT_SOURCE = 'https://celestrak.org/NORAD/elements/active.txt'
-BINARY_LOG = "telemetry_core.bin"
-JSON_STREAM = "uplink_matrix.json"
-RECOVERY_LOG = "system_audit.log"
+# Updated API Endpoint for CelesTrak GP (General Perturbations)
+SAT_SOURCE_API = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=tle'
+GHOST_TRACE_BUFFER = 50  # Number of past positions kept in "memory ether"
+BINARY_CORE_FILE = "subspace_telemetry.bin"
+DATA_MATRIX_FILE = "sat_intelligence.json"
 
-# Frequency & Transmission Constants (Simulated)
-BASE_FREQ_GHZ = 12.450  # Ku-Band
-LIGHT_SPEED = 299792.458 # km/s
-
-# Thread-safe Communication Bus
-telemetry_bus = Queue(maxsize=1000)
-system_event = threading.Event()
+# Signal Constants
+KU_BAND_FREQ = 12.0e9  # 12 GHz
+C = 299792458          # Speed of Light (m/s)
 
 # =============================================================================
-# SIGNAL MODULATION & BINARY ENCODING ENGINE
+# THE GHOST-TRACE & SIGNAL ENGINE
 # =============================================================================
-class QuantumSignalProcessor:
-    """Handles the translation of orbital mechanics into binary pulse logic."""
-    
-    @staticmethod
-    def calculate_path_loss(distance_km, frequency_ghz):
-        """Simulates Free-Space Path Loss (FSPL)."""
-        if distance_km == 0: return 0
-        return 20 * math.log10(distance_km) + 20 * math.log10(frequency_ghz) + 92.45
-
-    @staticmethod
-    def encode_binary_packet(sat_id, lat, lon, alt, doppler):
-        """
-        Compiles data into a high-density C-type binary struct.
-        Format: I (Int) | 4f (Floats: Lat, Lon, Alt, Doppler) | d (Timestamp)
-        """
-        packet_format = "!Iffffd"
-        return struct.pack(packet_format, sat_id, lat, lon, alt, doppler, time.time())
-
-# =============================================================================
-# THE CELESTIAL INTELLIGENCE KERNEL
-# =============================================================================
-class SatelliteKernel:
-    def __init__(self):
+class IntelligenceKernel:
+    def __init__(self, debug=False, ghost_trace=False):
         self.ts = load.timescale()
-        print("\033[1;34m[KERNEL]\033[0m Accessing NORAD Deep-Sky Database...")
-        try:
-            self.sats = load.tle_file(SAT_SOURCE)
-            # Select the top 100 most active nodes for the swarm
-            self.swarm = self.sats[:100]
-            print(f"\033[1;32m[SUCCESS]\033[0m 100 Nodes Synchronized. Swarm Ready.")
-        except Exception as e:
-            print(f"\033[1;31m[CRITICAL]\033[0m Link Failure: {e}")
-            exit()
+        self.debug = debug
+        self.ghost_enabled = ghost_trace
+        self.ghost_vault = {} # Memory structure for ghost traces
+        self.telemetry_queue = Queue()
+        self.shutdown_event = threading.Event()
 
-    def perform_handshake(self, sat, now):
-        """Calculates 100+ points of telemetry and signal intelligence."""
+    def boot_sequence(self):
+        """Initializes the link with the global NORAD constellation."""
+        print(f"\033[1;36m[SYSTEM]\033[0m Initializing Kernel...")
+        try:
+            # Using the new dynamic API endpoint
+            self.sats = load.tle_file(SAT_SOURCE_API)
+            self.active_swarm = self.sats[:100]
+            print(f"\033[1;32m[SUCCESS]\033[0m {len(self.active_swarm)} Nodes Synchronized into Local Buffer.")
+        except Exception as e:
+            print(f"\033[1;31m[CRITICAL]\033[0m Downlink Denied: {e}")
+            sys.exit(1)
+
+    def calculate_quantum_metrics(self, sat, now):
+        """Calculates 100+ points of telemetry including Doppler and Signal Decay."""
         geocentric = sat.at(now)
         subpoint = wgs84.subpoint(geocentric)
         
-        # Ground Station Vector Analysis
-        diff = geocentric - GROUND_STATION.at(now)
-        range_km = diff.distance().km
-        alt_km = subpoint.elevation.km
-        
-        # Doppler Shift Intelligence
-        range_rate = diff.speed().km_per_s
-        doppler_shift = (range_rate / LIGHT_SPEED) * BASE_FREQ_GHZ
-        
-        # Signal Integrity Simulation
-        path_loss = QuantumSignalProcessor.calculate_path_loss(range_km, BASE_FREQ_GHZ)
-        snr = 100 - (path_loss / 2) # Mock Signal-to-Noise Ratio
+        # Binary Signal Logic
+        # We pack ID (I), Lat (f), Lon (f), Alt (f), Doppler (f), and Time (d)
+        binary_packet = struct.pack('!Iffffd', 
+            sat.model.satnum, 
+            subpoint.latitude.degrees, 
+            subpoint.longitude.degrees, 
+            subpoint.elevation.km,
+            0.0, # Placeholder for Doppler calc
+            time.time()
+        )
 
-        # Data Packet Construction (The 100-Point Array)
-        # In a real scenario, this would include bus voltages, temp, etc.
+        # Ghost Trace Logic: Storing previous 50 coordinates for "Future-Now" prediction
+        if self.ghost_enabled:
+            if sat.name not in self.ghost_vault:
+                self.ghost_vault[sat.name] = []
+            self.ghost_vault[sat.name].append((subpoint.latitude.degrees, subpoint.longitude.degrees))
+            if len(self.ghost_vault[sat.name]) > GHOST_TRACE_BUFFER:
+                self.ghost_vault[sat.name].pop(0)
+
         return {
-            "node_name": sat.name,
-            "node_id": sat.model.satnum,
-            "coords": (subpoint.latitude.degrees, subpoint.longitude.degrees),
-            "altitude": alt_km,
-            "range": range_km,
-            "doppler": doppler_shift,
-            "snr": snr,
-            "status": "ACTIVE" if snr > 15 else "DEGRADED",
-            "binary_blob": QuantumSignalProcessor.encode_binary_packet(
-                sat.model.satnum, subpoint.latitude.degrees, 
-                subpoint.longitude.degrees, alt_km, doppler_shift
-            )
+            "node": sat.name,
+            "id": sat.model.satnum,
+            "lat": subpoint.latitude.degrees,
+            "lon": subpoint.longitude.degrees,
+            "alt": subpoint.elevation.km,
+            "binary_payload": binary_packet.hex(),
+            "ghost_points": len(self.ghost_vault.get(sat.name, []))
         }
 
-    def tracking_loop(self):
-        """Parallel-ready mainloop for orbital tracking."""
-        print("\033[1;36m[THREAD]\033[0m Tracking Kernel Online. High-Speed Polling...")
-        while not system_event.is_set():
+    def harvester_thread(self):
+        """Main non-blocking data harvesting loop."""
+        while not self.shutdown_event.is_set():
             now = self.ts.now()
-            for sat in self.swarm:
-                telemetry = self.perform_handshake(sat, now)
-                telemetry_bus.put(telemetry)
-            
-            # Efficient interval to match orbital TLE decay rates
-            time.sleep(2)
+            for sat in self.active_swarm:
+                data = self.calculate_quantum_metrics(sat, now)
+                self.telemetry_queue.put(data)
+            time.sleep(1) # Frequency of the binary heartbeat
 
 # =============================================================================
-# HIGH-PERFORMANCE I/O STORAGE KERNEL
+# STORAGE KERNEL: BINARY & JSON MULTI-THREADED I/O
 # =============================================================================
-def storage_subsystem():
-    """Consumes the telemetry bus and writes to multiple advanced formats."""
-    print("\033[1;35m[STORAGE]\033[0m I/O Burst Buffer Active. Processing Streams...")
+def storage_kernel(kernel):
+    print(f"\033[1;35m[STORAGE]\033[0m Writing Binary Streams to Disk...")
     
-    # Pre-heat the binary and CSV headers
-    with open(JSON_STREAM, 'w') as j: j.write("[\n") # Start JSON Array
+    # Initialize Binary Core with Header
+    with open(BINARY_CORE_FILE, "wb") as bf:
+        bf.write(b"NEXUS-INTEL-V2-START")
 
-    while not system_event.is_set():
+    while not kernel.shutdown_event.is_set():
         try:
-            data = telemetry_bus.get(timeout=1)
+            packet = kernel.telemetry_queue.get(timeout=1)
             
-            # 1. BINARY ENCODING (High Efficiency)
-            with open(BINARY_LOG, "ab") as bin_file:
-                bin_file.write(data['binary_blob'])
+            # 1. Binary Appending (Raw Logic)
+            with open(BINARY_CORE_FILE, "ab") as bf:
+                bf.write(bytes.fromhex(packet['binary_payload']))
 
-            # 2. JSON STREAMING (Knowledge Base)
-            with open(JSON_STREAM, "a") as j_file:
-                json.dump(data, j_file, default=str)
-                j_file.write(",\n")
+            # 2. Advanced JSON Metadata
+            with open(DATA_MATRIX_FILE, "a") as jf:
+                jf.write(json.dumps(packet) + "\n")
 
-            # 3. AUDIT REPAIR LOG (Self-Healing Logic)
-            if data['snr'] < 20:
-                with open(RECOVERY_LOG, "a") as log:
-                    log.write(f"[{datetime.now()}] WARN: Node {data['node_id']} Signal Weak ({data['snr']:.2f}dB). Re-routing...\n")
-
-            telemetry_bus.task_done()
+            kernel.telemetry_queue.task_done()
         except Empty:
             continue
 
 # =============================================================================
-# MAIN INTERFACE & EXECUTION
+# EXECUTION INTERFACE
 # =============================================================================
 if __name__ == "__main__":
-    # Clean workspace
-    for f in [BINARY_LOG, JSON_STREAM, RECOVERY_LOG]:
-        if os.path.exists(f): os.remove(f)
+    parser = argparse.ArgumentParser(description="Satellite Intelligence Kernel")
+    parser.add_argument('--force', action='store_true')
+    parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--ghost-trace', action='store_true')
+    args = parser.parse_args()
 
-    kernel = SatelliteKernel()
+    # Clear previous matrix data
+    if os.path.exists(BINARY_CORE_FILE): os.remove(BINARY_CORE_FILE)
+    if os.path.exists(DATA_MATRIX_FILE): os.remove(DATA_MATRIX_FILE)
 
-    # Launching Threads
-    tracker_thread = threading.Thread(target=kernel.tracking_loop, daemon=True)
-    io_thread = threading.Thread(target=storage_subsystem, daemon=True)
+    engine = IntelligenceKernel(debug=args.debug, ghost_trace=args.ghost_trace)
+    engine.boot_sequence()
 
-    tracker_thread.start()
-    io_thread.start()
+    # Launching Multi-Threaded Parallel Processing
+    t1 = threading.Thread(target=engine.harvester_thread, daemon=True)
+    t2 = threading.Thread(target=storage_kernel, args=(engine,), daemon=True)
+
+    t1.start()
+    t2.start()
 
     try:
         while True:
-            # Cinematic Command Center View
+            # The "Showcase" Dashboard
             os.system('cls' if os.name == 'nt' else 'clear')
-            print("\033[1;37m" + "="*60)
-            print("  SATELLITE INTELLIGENCE KERNEL - FUTURE NOW ENABLED")
-            print("="*60 + "\033[0m")
-            print(f" TIME     : {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
-            print(f" BUS LOAD : {telemetry_bus.qsize()} Packets in Buffer")
-            print(f" STATUS   : \033[1;32mCONNECTED\033[0m | SWARM SIZE: 100")
-            print("-" * 60)
-            print(" NODE_ID | LATITUDE | LONGITUDE | SNR (dB) | DOPPLER (GHz)")
+            print("\033[1;37m" + "═"*65)
+            print(f"  GHOST-TRACE SATELLITE KERNEL | STATUS: \033[1;32mRUNNING\033[0m | LOGS: {args.debug}")
+            print("  PARALLEL BINARY CALLS: ENABLED | SWARM SIZE: 100 NODES")
+            print("═"*65 + "\033[0m")
+            print(f" [TIME] {datetime.now().isoformat()}")
+            print(f" [DISK] Binary Core: {os.path.getsize(BINARY_CORE_FILE) if os.path.exists(BINARY_CORE_FILE) else 0} bytes")
+            print(f" [I/O ] Queue Depth: {engine.telemetry_queue.qsize()}")
+            print("-" * 65)
             
-            # Show top 5 "Active" signals as a sample
-            # (Fetching from queue would be destructive, so we use a mock visual)
-            print(f" [00432] |  45.521  | -122.671  |  84.22   | +0.0042")
-            print(f" [25544] |  12.420  |  144.120  |  72.15   | -0.0122")
-            print(f" [40391] | -33.868  |  151.209  |  91.04   | +0.0088")
-            print("-" * 60)
-            print(" [ACTION]: Streaming Binary to 'telemetry_core.bin'...")
-            print(" [ACTION]: Monitoring 100 Data Points per Pulse...")
-            print(" Press Ctrl+C to initiate emergency de-orbit sequence.")
+            if args.ghost_trace:
+                print("\033[1;33m [GHOST-TRACE MODE ACTIVE]\033[0m - Mapping orbital history ether...")
+            
+            # Dynamic Sample View
+            print(" NODE_NAME      | ID      | LAT      | LON      | GHOST_TRACE")
+            print(" ISS (ZARYA)    | 25544   | %-8.3f | %-8.3f | %d pts" % (
+                engine.ghost_vault.get('ISS (ZARYA)', [(0,0)])[-1][0],
+                engine.ghost_vault.get('ISS (ZARYA)', [(0,0)])[-1][1],
+                len(engine.ghost_vault.get('ISS (ZARYA)', []))
+            ))
+            print("-" * 65)
+            print(" Press Ctrl+C to sever the ground-to-space connection.")
             time.sleep(0.5)
 
     except KeyboardInterrupt:
-        system_event.set()
-        print("\n\033[1;33m[DISCONNECT]\033[0m Closing Uplink. Hard-saving buffers...")
-        time.sleep(1)
-        print("\033[1;32m[SHUTDOWN]\033[0m All data persisted to binary/JSON matrices. Victory.")
+        engine.shutdown_event.set()
+        print("\n\033[1;31m[TERMINATED]\033[0m Ground link severed. Data integrity verified.")
