@@ -11,7 +11,7 @@ import google.generativeai as genai
 # INTEGRATED CONFIGURATION
 # =============================================================================
 DB_NAME = "aether_intelligence.db"
-GEMINI_API_KEY = "AIzaSyDJspQYso3FgPDA-1RgwvgktOclm-oHIc4" # Replace with your actual key
+GEMINI_API_KEY = "APIHEREYOUIDIOTIFYOUDONTKNOWSTOPSEXINGGETSMARTERSTOPSEXINGGETINTELLIGENT" # Replace with your actual key
 genai.configure(api_key=GEMINI_API_KEY)
 
 # =============================================================================
